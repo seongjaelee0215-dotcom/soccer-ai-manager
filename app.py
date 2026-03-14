@@ -3,21 +3,77 @@ import pandas as pd
 import re
 from streamlit_gsheets import GSheetsConnection
 
-# --- [1. UI 설정 및 커스텀 디자인] ---
-st.set_page_config(page_title="AI Tactical Master", layout="wide")
-st.markdown("""
-    <style>
-    div.stButton > button:first-child {
-        background-color: #00BFFF; color: white; border-radius: 10px; border: none;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: 0.3s;
-    }
-    div.stButton > button:first-child:hover { background-color: #009ACD; transform: translateY(-2px); }
-    .stTabs [data-baseweb="tab-list"] { gap: 20px; }
-    .stTabs [data-baseweb="tab"] { font-weight: bold; border-radius: 5px; }
-    </style>
-""", unsafe_allow_html=True)
+# --- [1. 기본 설정 및 동적 CSS] ---
+st.set_page_config(page_title="AI Tactical Master", layout="wide", initial_sidebar_state="expanded")
 
-# --- [2. 구글 시트 연동 설정] ---
+# 사이드바: 사용자 정의 구단 설정
+with st.sidebar:
+    st.header("⚙️ 구단 커스텀 설정")
+    st.info("우리 팀만의 앱으로 꾸며보세요!")
+    
+    # 1. 팀명 설정
+    team_name = st.text_input("팀명 입력", st.session_state.get('team_name', '홍익대학교 경영학부 팀 EINS'))
+    st.session_state.team_name = team_name
+    
+    # 2. 로고 업로드
+    uploaded_logo = st.file_uploader("팀 로고 업로드 (PNG, JPG)", type=['png', 'jpg', 'jpeg'])
+    if uploaded_logo is not None:
+        st.session_state.logo = uploaded_logo.getvalue()
+        
+    # 3. 배경 줄무늬 색상 선택
+    st.write("🎨 배경 줄무늬 색상")
+    col1, col2 = st.columns(2)
+    with col1:
+        # 연보라색 기본값
+        color_outer = st.color_picker("바깥 줄무늬", st.session_state.get('color_outer', '#D8BFD8')) 
+    with col2:
+        # 남색 기본값
+        color_inner = st.color_picker("안쪽 줄무늬", st.session_state.get('color_inner', '#000080'))
+        
+    st.session_state.color_outer = color_outer
+    st.session_state.color_inner = color_inner
+
+# 사용자가 선택한 색상으로 전체 배경 CSS 동적 생성
+custom_css = f"""
+<style>
+    /* 전체 배경 양쪽 줄무늬 패턴 */
+    .stApp {{
+        background: linear-gradient(to right, 
+            {st.session_state.color_outer} 0%, {st.session_state.color_outer} 3%, 
+            {st.session_state.color_inner} 3%, {st.session_state.color_inner} 6%, 
+            #ffffff 6%, #ffffff 94%, 
+            {st.session_state.color_inner} 94%, {st.session_state.color_inner} 97%, 
+            {st.session_state.color_outer} 97%, {st.session_state.color_outer} 100%);
+    }}
+    /* 중앙 컨텐츠 영역이 잘 보이도록 반투명 흰색 박스 추가 */
+    .block-container {{
+        background-color: rgba(255, 255, 255, 0.95);
+        border-radius: 15px;
+        padding: 2rem !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        margin-top: 2rem;
+    }}
+    /* 버튼 디자인 */
+    div.stButton > button:first-child {{
+        background-color: {st.session_state.color_inner}; color: white; border-radius: 10px; border: none;
+    }}
+</style>
+"""
+st.markdown(custom_css, unsafe_allow_html=True)
+
+# --- [2. 헤더: 구단 로고 및 팀명 표시] ---
+header_col1, header_col2 = st.columns([1, 8])
+with header_col1:
+    if 'logo' in st.session_state:
+        st.image(st.session_state.logo, use_container_width=True)
+    else:
+        st.markdown("<h1 style='text-align:center;'>⚽</h1>", unsafe_allow_html=True)
+with header_col2:
+    st.title(st.session_state.team_name)
+st.divider()
+
+
+# --- [3. 구글 시트 연동 로직] ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
@@ -25,39 +81,18 @@ def load_data():
         df = conn.read(worksheet="Sheet1")
         return df['player_info'].dropna().tolist()
     except:
-        # 초기 접속자나 오류 시 보여줄 기본 샘플 명단
         return ["이성재(CB/DF)", "손흥민(LW/ST)", "이강인(AMF/RW)", "김민재(CB/DF)", "조현우(GK)"]
 
 if 'roster' not in st.session_state:
     st.session_state.roster = load_data()
 
-# --- [3. 핵심 알고리즘 및 데이터베이스] ---
 
+# --- [4. 핵심 알고리즘 및 데이터베이스 (V8과 동일)] ---
 coach_voice_db = {
-    "4-4-2": {
-        "FW": "⚔️ 공격: 포스트 플레이와 침투를 분담하세요.<br>🛡️ 수비: 상대 미드필더 패스 길목 차단!",
-        "MF": "⚔️ 공격: 윙어는 넓게, 중앙은 패스 보급.<br>🛡️ 수비: 포백 보호를 최우선으로 하세요.",
-        "DF": "⚔️ 공격: 전방으로 빠른 롱패스 연결.<br>🛡️ 수비: '두 줄 수비' 라인 조율에 집중!",
-        "GK": "🧤 안정적인 박스 장악과 조율이 필수입니다."
-    },
-    "4-3-3": {
-        "FW": "⚔️ 공격: 윙어는 안쪽으로 침투(Cut-in)!<br>🛡️ 수비: 전방 압박의 시작점이 되세요.",
-        "MF": "⚔️ 공격: 삼각형 대형 유지하며 패스 게임.<br>🛡️ 수비: 즉각적인 재압박(Gegenpressing) 시도!",
-        "DF": "⚔️ 공격: 적극적인 오버래핑으로 측면 지원.<br>🛡️ 수비: 높은 라인의 뒷공간을 주의하세요.",
-        "GK": "🧤 스위퍼 키퍼로서 넓은 수비 범위를 가져가세요."
-    },
-    "4-2-3-1": {
-        "FW": "⚔️ 공격: 2선이 올라올 시간을 버는 타겟맨.<br>🛡️ 수비: 상대 센터백을 끈질기게 괴롭히세요.",
-        "MF": "⚔️ 공격: 3선은 빌드업, 2선은 킬패스 집중.<br>🛡️ 수비: 더블 볼란치의 단단한 중원 장악!",
-        "DF": "⚔️ 공격: 하프스페이스 언더래핑 시도.<br>🛡️ 수비: 수비수는 침투 미리 예측하고 커버!",
-        "GK": "🧤 수비형 미드필더와 끊임없이 소통하세요."
-    },
-    "5-2-3": {
-        "FW": "⚔️ 공격: 측면 윙백과의 유기적인 스위칭.<br>🛡️ 수비: 팀 전체 압박을 리드하세요.",
-        "MF": "⚔️ 공격: 지체 없는 전방 연결.<br>🛡️ 수비: 미드필더 숫자가 적으니 공간 사수 집중!",
-        "DF": "⚔️ 공격: 윙백이 공격의 핵심! 터치라인 지배.<br>🛡️ 수비: 스위퍼가 최후방 라인을 컨트롤하세요.",
-        "GK": "🧤 빠른 핸드 스로인으로 역습의 기점을 만드세요."
-    }
+    "4-4-2": {"FW": "⚔️ 포스트 플레이 분담", "MF": "🛡️ 두 줄 수비 조율", "DF": "📦 라인 컨트롤", "GK": "🧤 박스 장악"},
+    "4-3-3": {"FW": "⚔️ 윙어 컷인 플레이", "MF": "🛡️ 즉각 재압박", "DF": "📦 오버래핑", "GK": "🧤 스위퍼 키퍼"},
+    "4-2-3-1": {"FW": "⚔️ 원톱 고립 주의", "MF": "🛡️ 2선 침투 패스", "DF": "📦 하프스페이스 커버", "GK": "🧤 소통 중심"},
+    "5-2-3": {"FW": "⚔️ 역습 속도 유지", "MF": "🛡️ 공간 점유 집중", "DF": "📦 윙백 적극 전진", "GK": "🧤 빠른 빌드업"}
 }
 
 tactics_form = {
@@ -106,7 +141,6 @@ def generate_squads(players, quarters, formations_selected, tactics):
         all_benches.append([p for p in players if p["name"] not in selected])
     return all_squads, all_benches, players
 
-# --- [4. 인터랙티브 전술판 렌더링 함수] ---
 def render_interactive_pitch(squad, form_name):
     y_map = {"FW": "15%", "MF": "45%", "DF": "75%", "GK": "90%"}
     player_html = ""
@@ -119,7 +153,7 @@ def render_interactive_pitch(squad, form_name):
             x = (100 / (len(names) + 1)) * (i + 1)
             player_html += f"""
             <div onclick="showCoach('{name}', '{pos}', '{instruction}')" style="position:absolute; top:{y_map[pos]}; left:{x}%; transform:translate(-50%, -50%); text-align:center; cursor:pointer; z-index:5;">
-                <div style="width:20px; height:20px; background:white; border:2px solid #00BFFF; border-radius:50%; margin:0 auto; box-shadow:0 2px 5px rgba(0,0,0,0.5);"></div>
+                <div style="width:20px; height:20px; background:white; border:2px solid {st.session_state.color_inner}; border-radius:50%; margin:0 auto; box-shadow:0 2px 5px rgba(0,0,0,0.5);"></div>
                 <div style="color:white; font-size:12px; font-weight:bold; margin-top:3px; white-space:nowrap; text-shadow: 1px 1px 3px black;">{name}</div>
             </div>"""
             
@@ -129,8 +163,8 @@ def render_interactive_pitch(squad, form_name):
         <div style="position:absolute; top:50%; left:50%; width:80px; height:80px; border:2px solid white; border-radius:50%; transform:translate(-50%, -50%); opacity:0.4;"></div>
         {player_html}
         <div id="modal" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:10; padding:20px; color:white; box-sizing:border-box;">
-            <div style="text-align:right; cursor:pointer; font-size:24px; color:#00BFFF;" onclick="document.getElementById('modal').style.display='none'">&times;</div>
-            <h3 id="m-name" style="margin:0; color:#00BFFF;"></h3>
+            <div style="text-align:right; cursor:pointer; font-size:24px; color:{st.session_state.color_outer};" onclick="document.getElementById('modal').style.display='none'">&times;</div>
+            <h3 id="m-name" style="margin:0; color:{st.session_state.color_outer};"></h3>
             <p id="m-pos" style="font-size:12px; color:#aaa; margin-bottom:15px;"></p>
             <p id="m-text" style="font-size:14px; line-height:1.6;"></p>
             <p style="font-size:11px; color:#666; margin-top:30px;">(클릭하여 닫기)</p>
@@ -146,9 +180,8 @@ def render_interactive_pitch(squad, form_name):
     </script>
     """
 
-# --- [5. 메인 UI 화면] ---
-st.title("⚽ AI Tactical Master")
 
+# --- [5. 메인 탭 UI] ---
 tab1, tab2 = st.tabs(["📝 우리 팀 로스터 관리", "🏟️ 매치데이 스쿼드 짜기"])
 
 with tab1:
@@ -182,7 +215,6 @@ with tab2:
                         st.markdown(f"### 🎯 {i+1}Q ({forms[i]})")
                         st.components.v1.html(render_interactive_pitch(res[i], forms[i]), height=450)
                         
-                        # 전술 요약 텍스트 추가 (명당 자리!)
                         with st.expander(f"💡 {forms[i]} 핵심 전술 보기"):
                             data = coach_voice_db[forms[i]]
                             st.markdown(f"**공격:** {data['FW']}\n\n**미드:** {data['MF']}\n\n**수비:** {data['DF']}")
