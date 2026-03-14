@@ -3,40 +3,72 @@ import pandas as pd
 import re
 from streamlit_gsheets import GSheetsConnection
 
-# --- [1. 기본 설정 및 동적 CSS] ---
 st.set_page_config(page_title="AI Tactical Master", layout="wide", initial_sidebar_state="expanded")
 
-# 사이드바: 사용자 정의 구단 설정
+# --- [1. 구글 시트 연동 설정] ---
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# 설정값 불러오기 함수
+def load_settings():
+    try:
+        df = conn.read(worksheet="Settings")
+        return dict(zip(df['setting_name'], df['setting_value']))
+    except:
+        return {} # Settings 시트가 비어있거나 없으면 빈 딕셔너리 반환
+
+# 로스터 불러오기 함수
+def load_data():
+    try:
+        df = conn.read(worksheet="Sheet1")
+        return df['player_info'].dropna().tolist()
+    except:
+        return ["이성재(CB/DF)", "손흥민(LW/ST)", "이강인(AMF/RW)"]
+
+# 초기 세션 상태 설정
+if 'roster' not in st.session_state:
+    st.session_state.roster = load_data()
+
+if 'settings' not in st.session_state:
+    saved_settings = load_settings()
+    st.session_state.team_name = saved_settings.get('team_name', '홍익대학교 경영학부 팀 EINS')
+    st.session_state.color_outer = saved_settings.get('color_outer', '#D8BFD8')
+    st.session_state.color_inner = saved_settings.get('color_inner', '#000080')
+    st.session_state.logo_url = saved_settings.get('logo_url', '')
+
+# --- [2. 사이드바: 구단 커스텀 설정 및 저장] ---
 with st.sidebar:
     st.header("⚙️ 구단 커스텀 설정")
-    st.info("우리 팀만의 앱으로 꾸며보세요!")
+    st.info("설정을 변경하고 반드시 '저장'을 눌러주세요!")
     
-    # 1. 팀명 설정
-    team_name = st.text_input("팀명 입력", st.session_state.get('team_name', '홍익대학교 경영학부 팀 EINS'))
-    st.session_state.team_name = team_name
+    input_team_name = st.text_input("팀명 입력", st.session_state.team_name)
+    input_logo_url = st.text_input("로고 이미지 URL 입력", st.session_state.logo_url, placeholder="https://.../logo.png")
     
-    # 2. 로고 업로드
-    uploaded_logo = st.file_uploader("팀 로고 업로드 (PNG, JPG)", type=['png', 'jpg', 'jpeg'])
-    if uploaded_logo is not None:
-        st.session_state.logo = uploaded_logo.getvalue()
-        
-    # 3. 배경 줄무늬 색상 선택
     st.write("🎨 배경 줄무늬 색상")
     col1, col2 = st.columns(2)
     with col1:
-        # 연보라색 기본값
-        color_outer = st.color_picker("바깥 줄무늬", st.session_state.get('color_outer', '#D8BFD8')) 
+        input_color_outer = st.color_picker("바깥 줄무늬", st.session_state.color_outer) 
     with col2:
-        # 남색 기본값
-        color_inner = st.color_picker("안쪽 줄무늬", st.session_state.get('color_inner', '#000080'))
+        input_color_inner = st.color_picker("안쪽 줄무늬", st.session_state.color_inner)
         
-    st.session_state.color_outer = color_outer
-    st.session_state.color_inner = color_inner
+    if st.button("💾 디자인 설정 영구 저장"):
+        # 세션 업데이트
+        st.session_state.team_name = input_team_name
+        st.session_state.logo_url = input_logo_url
+        st.session_state.color_outer = input_color_outer
+        st.session_state.color_inner = input_color_inner
+        
+        # 구글 시트에 업데이트
+        settings_df = pd.DataFrame({
+            'setting_name': ['team_name', 'logo_url', 'color_outer', 'color_inner'],
+            'setting_value': [input_team_name, input_logo_url, input_color_outer, input_color_inner]
+        })
+        conn.update(worksheet="Settings", data=settings_df)
+        st.success("디자인이 클라우드에 저장되었습니다!")
 
-# 사용자가 선택한 색상으로 전체 배경 CSS 동적 생성
+# --- [3. 동적 CSS (반투명 배경 적용)] ---
+# block-container 배경을 rgba를 사용해 80% 불투명도로 설정하고 backdrop-filter를 추가해 글씨 가독성을 높입니다.
 custom_css = f"""
 <style>
-    /* 전체 배경 양쪽 줄무늬 패턴 */
     .stApp {{
         background: linear-gradient(to right, 
             {st.session_state.color_outer} 0%, {st.session_state.color_outer} 3%, 
@@ -45,49 +77,40 @@ custom_css = f"""
             {st.session_state.color_inner} 94%, {st.session_state.color_inner} 97%, 
             {st.session_state.color_outer} 97%, {st.session_state.color_outer} 100%);
     }}
-    /* 중앙 컨텐츠 영역이 잘 보이도록 반투명 흰색 박스 추가 */
     .block-container {{
-        background-color: rgba(255, 255, 255, 0.95);
+        background-color: rgba(255, 255, 255, 0.85) !important;
+        backdrop-filter: blur(4px);
         border-radius: 15px;
         padding: 2rem !important;
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         margin-top: 2rem;
     }}
-    /* 버튼 디자인 */
     div.stButton > button:first-child {{
         background-color: {st.session_state.color_inner}; color: white; border-radius: 10px; border: none;
+    }}
+    /* 사이드바 저장 버튼만 색상 다르게 */
+    section[data-testid="stSidebar"] div.stButton > button:first-child {{
+        background-color: #2E8B57; width: 100%;
     }}
 </style>
 """
 st.markdown(custom_css, unsafe_allow_html=True)
 
-# --- [2. 헤더: 구단 로고 및 팀명 표시] ---
+# --- [4. 헤더: 구단 로고 및 팀명 표시] ---
 header_col1, header_col2 = st.columns([1, 8])
 with header_col1:
-    if 'logo' in st.session_state:
-        st.image(st.session_state.logo, use_container_width=True)
+    if st.session_state.logo_url:
+        try:
+            st.image(st.session_state.logo_url, use_container_width=True)
+        except:
+            st.markdown("<h1 style='text-align:center;'>⚽</h1>", unsafe_allow_html=True)
     else:
         st.markdown("<h1 style='text-align:center;'>⚽</h1>", unsafe_allow_html=True)
 with header_col2:
     st.title(st.session_state.team_name)
 st.divider()
 
-
-# --- [3. 구글 시트 연동 로직] ---
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-def load_data():
-    try:
-        df = conn.read(worksheet="Sheet1")
-        return df['player_info'].dropna().tolist()
-    except:
-        return ["이성재(CB/DF)", "손흥민(LW/ST)", "이강인(AMF/RW)", "김민재(CB/DF)", "조현우(GK)"]
-
-if 'roster' not in st.session_state:
-    st.session_state.roster = load_data()
-
-
-# --- [4. 핵심 알고리즘 및 데이터베이스 (V8과 동일)] ---
+# --- [5. 핵심 알고리즘 (이전과 동일)] ---
 coach_voice_db = {
     "4-4-2": {"FW": "⚔️ 포스트 플레이 분담", "MF": "🛡️ 두 줄 수비 조율", "DF": "📦 라인 컨트롤", "GK": "🧤 박스 장악"},
     "4-3-3": {"FW": "⚔️ 윙어 컷인 플레이", "MF": "🛡️ 즉각 재압박", "DF": "📦 오버래핑", "GK": "🧤 스위퍼 키퍼"},
@@ -158,7 +181,7 @@ def render_interactive_pitch(squad, form_name):
             </div>"""
             
     return f"""
-    <div style="background:linear-gradient(180deg, #2E8B57 0%, #226B43 100%); width:100%; max-width:350px; height:440px; position:relative; border:3px solid white; border-radius:15px; overflow:hidden; font-family:sans-serif; margin: 0 auto;">
+    <div style="background:linear-gradient(180deg, #2E8B57 0%, #226B43 100%); width:100%; max-width:350px; height:440px; position:relative; border:3px solid white; border-radius:15px; overflow:hidden; font-family:sans-serif; margin: 0 auto; box-shadow:0 8px 16px rgba(0,0,0,0.2);">
         <div style="position:absolute; top:50%; width:100%; height:2px; background:white; opacity:0.4;"></div>
         <div style="position:absolute; top:50%; left:50%; width:80px; height:80px; border:2px solid white; border-radius:50%; transform:translate(-50%, -50%); opacity:0.4;"></div>
         {player_html}
@@ -180,18 +203,17 @@ def render_interactive_pitch(squad, form_name):
     </script>
     """
 
-
-# --- [5. 메인 탭 UI] ---
+# --- [6. 메인 탭 UI] ---
 tab1, tab2 = st.tabs(["📝 우리 팀 로스터 관리", "🏟️ 매치데이 스쿼드 짜기"])
 
 with tab1:
     st.header("🌐 구글 시트 동기화")
     roster_input = st.text_area("전체 명단 (이름(주포/부포) 형식, 쉼표 구분)", value=", ".join(st.session_state.roster), height=200)
-    if st.button("💾 구글 시트에 영구 저장"):
+    if st.button("💾 명단 클라우드 저장"):
         new_list = [p.strip() for p in roster_input.split(",") if p.strip()]
         st.session_state.roster = new_list
         conn.update(worksheet="Sheet1", data=pd.DataFrame({"player_info": new_list}))
-        st.success("✅ 저장이 완료되었습니다!")
+        st.success("✅ 로스터 저장이 완료되었습니다!")
 
 with tab2:
     col_l, col_r = st.columns([1, 2.5])
@@ -213,7 +235,7 @@ with tab2:
                 for i in range(num_q):
                     with board_cols[i % 2]:
                         st.markdown(f"### 🎯 {i+1}Q ({forms[i]})")
-                        st.components.v1.html(render_interactive_pitch(res[i], forms[i]), height=450)
+                        st.components.v1.html(render_interactive_pitch(res[i], forms[i]), height=470)
                         
                         with st.expander(f"💡 {forms[i]} 핵심 전술 보기"):
                             data = coach_voice_db[forms[i]]
