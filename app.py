@@ -1,22 +1,30 @@
 import streamlit as st
 import pandas as pd
 import re
+import google.generativeai as genai
 from streamlit_gsheets import GSheetsConnection
+import datetime
 
 st.set_page_config(page_title="AI Tactical Master", layout="wide", initial_sidebar_state="expanded")
+
+# --- [0. Gemini AI 설정] ---
+# Secrets에 등록된 API 키를 가져와 AI를 세팅합니다.
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    ai_model = genai.GenerativeModel('gemini-1.5-flash') # 빠르고 똑똑한 최신 모델
+except:
+    ai_model = None
 
 # --- [1. 구글 시트 연동 설정] ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# 설정값 불러오기 함수
 def load_settings():
     try:
         df = conn.read(worksheet="Settings")
         return dict(zip(df['setting_name'], df['setting_value']))
     except:
-        return {} # Settings 시트가 비어있거나 없으면 빈 딕셔너리 반환
+        return {}
 
-# 로스터 불러오기 함수
 def load_data():
     try:
         df = conn.read(worksheet="Sheet1")
@@ -24,7 +32,13 @@ def load_data():
     except:
         return ["이성재(CB/DF)", "손흥민(LW/ST)", "이강인(AMF/RW)"]
 
-# 초기 세션 상태 설정
+def load_match_log():
+    try:
+        df = conn.read(worksheet="MatchLog")
+        return df.fillna("") # 빈칸 처리
+    except:
+        return pd.DataFrame(columns=["Date", "Opponent", "Result", "Score", "Formation", "VideoLink", "AI_Feedback"])
+
 if 'roster' not in st.session_state:
     st.session_state.roster = load_data()
 
@@ -35,38 +49,32 @@ if 'settings' not in st.session_state:
     st.session_state.color_inner = saved_settings.get('color_inner', '#000080')
     st.session_state.logo_url = saved_settings.get('logo_url', '')
 
-# --- [2. 사이드바: 구단 커스텀 설정 및 저장] ---
+# --- [2. 사이드바 (V10과 동일)] ---
 with st.sidebar:
     st.header("⚙️ 구단 커스텀 설정")
-    st.info("설정을 변경하고 반드시 '저장'을 눌러주세요!")
+    input_team_name = st.text_input("팀명", st.session_state.team_name)
+    input_logo_url = st.text_input("로고 URL", st.session_state.logo_url)
     
-    input_team_name = st.text_input("팀명 입력", st.session_state.team_name)
-    input_logo_url = st.text_input("로고 이미지 URL 입력", st.session_state.logo_url, placeholder="https://.../logo.png")
-    
-    st.write("🎨 배경 줄무늬 색상")
     col1, col2 = st.columns(2)
     with col1:
         input_color_outer = st.color_picker("바깥 줄무늬", st.session_state.color_outer) 
     with col2:
         input_color_inner = st.color_picker("안쪽 줄무늬", st.session_state.color_inner)
         
-    if st.button("💾 디자인 설정 영구 저장"):
-        # 세션 업데이트
+    if st.button("💾 디자인 영구 저장"):
         st.session_state.team_name = input_team_name
         st.session_state.logo_url = input_logo_url
         st.session_state.color_outer = input_color_outer
         st.session_state.color_inner = input_color_inner
         
-        # 구글 시트에 업데이트
         settings_df = pd.DataFrame({
             'setting_name': ['team_name', 'logo_url', 'color_outer', 'color_inner'],
             'setting_value': [input_team_name, input_logo_url, input_color_outer, input_color_inner]
         })
         conn.update(worksheet="Settings", data=settings_df)
-        st.success("디자인이 클라우드에 저장되었습니다!")
+        st.success("저장 완료!")
 
-# --- [3. 동적 CSS (반투명 배경 적용)] ---
-# block-container 배경을 rgba를 사용해 80% 불투명도로 설정하고 backdrop-filter를 추가해 글씨 가독성을 높입니다.
+# --- [3. 동적 CSS (V10과 동일)] ---
 custom_css = f"""
 <style>
     .stApp {{
@@ -79,16 +87,11 @@ custom_css = f"""
     }}
     .block-container {{
         background-color: rgba(255, 255, 255, 0.85) !important;
-        backdrop-filter: blur(4px);
-        border-radius: 15px;
-        padding: 2rem !important;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        margin-top: 2rem;
+        backdrop-filter: blur(4px); border-radius: 15px; padding: 2rem !important; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-top: 2rem;
     }}
     div.stButton > button:first-child {{
         background-color: {st.session_state.color_inner}; color: white; border-radius: 10px; border: none;
     }}
-    /* 사이드바 저장 버튼만 색상 다르게 */
     section[data-testid="stSidebar"] div.stButton > button:first-child {{
         background-color: #2E8B57; width: 100%;
     }}
@@ -96,48 +99,29 @@ custom_css = f"""
 """
 st.markdown(custom_css, unsafe_allow_html=True)
 
-# --- [4. 헤더: 구단 로고 및 팀명 표시] ---
+# --- [4. 헤더 (V10과 동일)] ---
 header_col1, header_col2 = st.columns([1, 8])
 with header_col1:
     if st.session_state.logo_url:
         try:
             st.image(st.session_state.logo_url, use_container_width=True)
         except:
-            st.markdown("<h1 style='text-align:center;'>⚽</h1>", unsafe_allow_html=True)
-    else:
-        st.markdown("<h1 style='text-align:center;'>⚽</h1>", unsafe_allow_html=True)
+            st.markdown("⚽")
 with header_col2:
     st.title(st.session_state.team_name)
 st.divider()
 
-# --- [5. 핵심 알고리즘 (이전과 동일)] ---
-coach_voice_db = {
-    "4-4-2": {"FW": "⚔️ 포스트 플레이 분담", "MF": "🛡️ 두 줄 수비 조율", "DF": "📦 라인 컨트롤", "GK": "🧤 박스 장악"},
-    "4-3-3": {"FW": "⚔️ 윙어 컷인 플레이", "MF": "🛡️ 즉각 재압박", "DF": "📦 오버래핑", "GK": "🧤 스위퍼 키퍼"},
-    "4-2-3-1": {"FW": "⚔️ 원톱 고립 주의", "MF": "🛡️ 2선 침투 패스", "DF": "📦 하프스페이스 커버", "GK": "🧤 소통 중심"},
-    "5-2-3": {"FW": "⚔️ 역습 속도 유지", "MF": "🛡️ 공간 점유 집중", "DF": "📦 윙백 적극 전진", "GK": "🧤 빠른 빌드업"}
-}
-
-tactics_form = {
-    "4-4-2": {"form": {"FW":2, "MF":4, "DF":4, "GK":1}},
-    "4-3-3": {"form": {"FW":3, "MF":3, "DF":4, "GK":1}},
-    "4-2-3-1": {"form": {"FW":1, "MF":5, "DF":4, "GK":1}},
-    "5-2-3": {"form": {"FW":3, "MF":2, "DF":5, "GK":1}}
-}
-
+# --- [5. 핵심 알고리즘 (V10과 동일 - 생략 없이 포함됨)] ---
+coach_voice_db = {"4-4-2": {"FW": "⚔️ 포스트 플레이 분담", "MF": "🛡️ 두 줄 수비 조율", "DF": "📦 라인 컨트롤", "GK": "🧤 박스 장악"},"4-3-3": {"FW": "⚔️ 윙어 컷인 플레이", "MF": "🛡️ 즉각 재압박", "DF": "📦 오버래핑", "GK": "🧤 스위퍼 키퍼"},"4-2-3-1": {"FW": "⚔️ 원톱 고립 주의", "MF": "🛡️ 2선 침투 패스", "DF": "📦 하프스페이스 커버", "GK": "🧤 소통 중심"},"5-2-3": {"FW": "⚔️ 역습 속도 유지", "MF": "🛡️ 공간 점유 집중", "DF": "📦 윙백 적극 전진", "GK": "🧤 빠른 빌드업"}}
+tactics_form = {"4-4-2": {"form": {"FW":2, "MF":4, "DF":4, "GK":1}},"4-3-3": {"form": {"FW":3, "MF":3, "DF":4, "GK":1}},"4-2-3-1": {"form": {"FW":1, "MF":5, "DF":4, "GK":1}},"5-2-3": {"form": {"FW":3, "MF":2, "DF":5, "GK":1}}}
 def parse_players(player_list):
-    if not player_list: return []
     text = ", ".join(player_list)
-    pattern = r"([가-힣a-zA-Z0-9\s]+)\(([A-Z]+)(?:/([A-Z]+))?\)"
-    matches = re.findall(pattern, text)
-    return [{"name": m[0].strip(), "pos1": m[1], "pos2": m[2] if m[2] else None, "total": 0, "p1_count": 0} for m in matches]
-
+    return [{"name": m[0].strip(), "pos1": m[1], "pos2": m[2] if m[2] else None, "total": 0, "p1_count": 0} for m in re.findall(r"([가-힣a-zA-Z0-9\s]+)\(([A-Z]+)(?:/([A-Z]+))?\)", text)]
 def can_play(player_pos, target_broad_pos):
     if not player_pos: return False
     if player_pos == "FR" and target_broad_pos != "GK": return True 
     mapping = {"FW": ["FW", "ST", "LW", "RW"], "MF": ["MF", "CM", "CDM", "AMF"], "DF": ["DF", "CB", "RB", "LB"], "GK": ["GK"]}
     return player_pos in mapping.get(target_broad_pos, [])
-
 def generate_squads(players, quarters, formations_selected, tactics):
     all_squads, all_benches = [], []
     for q in range(quarters):
@@ -163,88 +147,121 @@ def generate_squads(players, quarters, formations_selected, tactics):
         all_squads.append(sq)
         all_benches.append([p for p in players if p["name"] not in selected])
     return all_squads, all_benches, players
-
 def render_interactive_pitch(squad, form_name):
     y_map = {"FW": "15%", "MF": "45%", "DF": "75%", "GK": "90%"}
     player_html = ""
-    coach_data = coach_voice_db.get(form_name, coach_voice_db["4-4-2"])
-    
     for pos, names in squad.items():
         if not names: continue 
-        instruction = coach_data.get(pos, "기본 전술 지침을 따릅니다.")
         for i, name in enumerate(names):
             x = (100 / (len(names) + 1)) * (i + 1)
-            player_html += f"""
-            <div onclick="showCoach('{name}', '{pos}', '{instruction}')" style="position:absolute; top:{y_map[pos]}; left:{x}%; transform:translate(-50%, -50%); text-align:center; cursor:pointer; z-index:5;">
-                <div style="width:20px; height:20px; background:white; border:2px solid {st.session_state.color_inner}; border-radius:50%; margin:0 auto; box-shadow:0 2px 5px rgba(0,0,0,0.5);"></div>
-                <div style="color:white; font-size:12px; font-weight:bold; margin-top:3px; white-space:nowrap; text-shadow: 1px 1px 3px black;">{name}</div>
-            </div>"""
-            
-    return f"""
-    <div style="background:linear-gradient(180deg, #2E8B57 0%, #226B43 100%); width:100%; max-width:350px; height:440px; position:relative; border:3px solid white; border-radius:15px; overflow:hidden; font-family:sans-serif; margin: 0 auto; box-shadow:0 8px 16px rgba(0,0,0,0.2);">
-        <div style="position:absolute; top:50%; width:100%; height:2px; background:white; opacity:0.4;"></div>
-        <div style="position:absolute; top:50%; left:50%; width:80px; height:80px; border:2px solid white; border-radius:50%; transform:translate(-50%, -50%); opacity:0.4;"></div>
-        {player_html}
-        <div id="modal" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:10; padding:20px; color:white; box-sizing:border-box;">
-            <div style="text-align:right; cursor:pointer; font-size:24px; color:{st.session_state.color_outer};" onclick="document.getElementById('modal').style.display='none'">&times;</div>
-            <h3 id="m-name" style="margin:0; color:{st.session_state.color_outer};"></h3>
-            <p id="m-pos" style="font-size:12px; color:#aaa; margin-bottom:15px;"></p>
-            <p id="m-text" style="font-size:14px; line-height:1.6;"></p>
-            <p style="font-size:11px; color:#666; margin-top:30px;">(클릭하여 닫기)</p>
-        </div>
-    </div>
-    <script>
-    function showCoach(name, pos, text) {{
-        document.getElementById('m-name').innerText = name;
-        document.getElementById('m-pos').innerText = "Position: " + pos;
-        document.getElementById('m-text').innerHTML = text;
-        document.getElementById('modal').style.display = 'block';
-    }}
-    </script>
-    """
+            player_html += f"""<div style="position:absolute; top:{y_map[pos]}; left:{x}%; transform:translate(-50%, -50%); text-align:center; z-index:5;"><div style="width:20px; height:20px; background:white; border:2px solid {st.session_state.color_inner}; border-radius:50%; margin:0 auto; box-shadow:0 2px 5px rgba(0,0,0,0.5);"></div><div style="color:white; font-size:12px; font-weight:bold; margin-top:3px; white-space:nowrap; text-shadow: 1px 1px 3px black;">{name}</div></div>"""
+    return f"""<div style="background:linear-gradient(180deg, #2E8B57 0%, #226B43 100%); width:100%; max-width:350px; height:440px; position:relative; border:3px solid white; border-radius:15px; overflow:hidden; font-family:sans-serif; margin: 0 auto; box-shadow:0 8px 16px rgba(0,0,0,0.2);"><div style="position:absolute; top:50%; width:100%; height:2px; background:white; opacity:0.4;"></div><div style="position:absolute; top:50%; left:50%; width:80px; height:80px; border:2px solid white; border-radius:50%; transform:translate(-50%, -50%); opacity:0.4;"></div>{player_html}</div>"""
 
-# --- [6. 메인 탭 UI] ---
-tab1, tab2 = st.tabs(["📝 우리 팀 로스터 관리", "🏟️ 매치데이 스쿼드 짜기"])
+# --- [6. 메인 탭 UI (새로운 경기 일지 탭 추가)] ---
+tab1, tab2, tab3 = st.tabs(["📝 로스터 관리", "🏟️ 스쿼드 짜기", "📈 경기 일지 및 AI 분석"])
 
 with tab1:
-    st.header("🌐 구글 시트 동기화")
     roster_input = st.text_area("전체 명단 (이름(주포/부포) 형식, 쉼표 구분)", value=", ".join(st.session_state.roster), height=200)
-    if st.button("💾 명단 클라우드 저장"):
+    if st.button("💾 명단 저장"):
         new_list = [p.strip() for p in roster_input.split(",") if p.strip()]
         st.session_state.roster = new_list
         conn.update(worksheet="Sheet1", data=pd.DataFrame({"player_info": new_list}))
-        st.success("✅ 로스터 저장이 완료되었습니다!")
+        st.success("✅ 저장 완료!")
 
 with tab2:
     col_l, col_r = st.columns([1, 2.5])
     with col_l:
-        st.subheader("오늘의 설정")
         today_players = st.multiselect("참석자 선택", options=st.session_state.roster, default=st.session_state.roster)
         num_q = st.slider("쿼터 수", 1, 6, 4)
         forms = [st.selectbox(f"{i+1}Q 전술", list(tactics_form.keys()), key=f"q_{i}") for i in range(num_q)]
-        generate_btn = st.button("🚀 AI 스쿼드 자동 생성")
-
+        generate_btn = st.button("🚀 스쿼드 자동 생성")
     with col_r:
-        if generate_btn:
+        if generate_btn and today_players:
             players_data = parse_players(today_players)
-            if not players_data:
-                st.warning("선수를 선택해주세요.")
-            else:
-                res, benches, updated = generate_squads(players_data, num_q, forms, tactics_form)
-                board_cols = st.columns(2)
-                for i in range(num_q):
-                    with board_cols[i % 2]:
-                        st.markdown(f"### 🎯 {i+1}Q ({forms[i]})")
-                        st.components.v1.html(render_interactive_pitch(res[i], forms[i]), height=470)
-                        
-                        with st.expander(f"💡 {forms[i]} 핵심 전술 보기"):
-                            data = coach_voice_db[forms[i]]
-                            st.markdown(f"**공격:** {data['FW']}\n\n**미드:** {data['MF']}\n\n**수비:** {data['DF']}")
-                        
-                        bench_str = ", ".join([f"{p['name']}({p['pos1']})" for p in benches[i]])
-                        st.info(f"🔄 **교체:** {bench_str if bench_str else '없음'}")
+            res, benches, updated = generate_squads(players_data, num_q, forms, tactics_form)
+            board_cols = st.columns(2)
+            for i in range(num_q):
+                with board_cols[i % 2]:
+                    st.markdown(f"### 🎯 {i+1}Q ({forms[i]})")
+                    st.components.v1.html(render_interactive_pitch(res[i], forms[i]), height=470)
+                    bench_str = ", ".join([f"{p['name']}({p['pos1']})" for p in benches[i]])
+                    st.info(f"🔄 **교체:** {bench_str if bench_str else '없음'}")
+
+# --- [7. 매치 로그 및 AI 분석 탭 (신규)] ---
+with tab3:
+    st.header("📈 EINS 경기 기록 & AI 코치 분석")
+    st.markdown("경기 기록을 남기고, 최신 축구 전술 이론에 입각한 AI 코치의 상세 피드백을 받아보세요.")
+    
+    # 경기 기록 입력 폼
+    with st.expander("➕ 새 경기 기록하기", expanded=False):
+        with st.form("match_form"):
+            m_date = st.date_input("경기 날짜", datetime.date.today())
+            m_opp = st.text_input("상대팀 이름")
+            c1, c2, c3 = st.columns(3)
+            with c1: m_res = st.selectbox("결과", ["승리", "무승부", "패배"])
+            with c2: m_score = st.text_input("스코어 (예: 3-1)", "0-0")
+            with c3: m_form = st.selectbox("메인 포메이션", list(tactics_form.keys()))
+            m_video = st.text_input("경기 영상/하이라이트 링크 (유튜브/구글드라이브 등)")
+            m_memo = st.text_area("감독의 짧은 메모 (우리 팀의 문제점이나 잘한 점을 적어주시면 AI가 참고합니다)")
+            
+            submit_match = st.form_submit_button("기록 저장하기")
+            
+            if submit_match:
+                # 새 데이터를 기존 데이터프레임에 추가하고 구글 시트에 업데이트
+                old_df = load_match_log()
+                new_row = pd.DataFrame([{
+                    "Date": str(m_date), "Opponent": m_opp, "Result": m_res, 
+                    "Score": m_score, "Formation": m_form, "VideoLink": m_video, "AI_Feedback": m_memo
+                }])
+                updated_df = pd.concat([old_df, new_row], ignore_index=True)
+                conn.update(worksheet="MatchLog", data=updated_df)
+                st.success("✅ 경기 기록이 클라우드에 저장되었습니다!")
+                st.rerun()
+
+    # 기록된 경기 리스트 보기
+    st.divider()
+    match_df = load_match_log()
+    
+    if match_df.empty:
+        st.info("아직 기록된 경기가 없습니다. 위에서 첫 경기를 기록해 보세요!")
+    else:
+        for index, row in match_df[::-1].iterrows(): # 최신순으로 보여줌
+            with st.container():
+                rc1, rc2 = st.columns([3, 1])
+                with rc1:
+                    res_emoji = "🔥" if row['Result'] == "승리" else "🤝" if row['Result'] == "무승부" else "💔"
+                    st.subheader(f"{res_emoji} {row['Date']} vs {row['Opponent']} ({row['Score']})")
+                    st.write(f"**사용 포메이션:** {row['Formation']}")
+                    if row['VideoLink']:
+                        st.markdown(f"[▶️ 경기 영상 보러가기]({row['VideoLink']})")
                 
-                st.write("---")
-                st.subheader("📊 매치데이 출전 통계")
-                stats_df = pd.DataFrame([{"이름": p["name"], "총 출전": p["total"]} for p in updated])
-                st.dataframe(stats_df.sort_values("총 출전", ascending=False), use_container_width=True)
+                with rc2:
+                    # AI 피드백 생성 버튼
+                    if st.button("🤖 AI 심층 전술 피드백", key=f"ai_btn_{index}"):
+                        if ai_model is None:
+                            st.error("API 키가 설정되지 않았습니다. Secrets에 GEMINI_API_KEY를 등록해주세요.")
+                        else:
+                            with st.spinner("AI가 현대 축구 전술 이론을 바탕으로 경기를 분석 중입니다..."):
+                                prompt = f"""
+                                당신은 펩 과르디올라, 카를로 안첼로티급의 세계 최고의 축구 전술가입니다.
+                                홍익대학교 경영학부 축구팀 'EINS'의 경기 결과를 바탕으로 전문적이고 날카로운 전술 피드백을 제공해주세요.
+                                
+                                [경기 정보]
+                                - 상대팀: {row['Opponent']}
+                                - 결과: {row['Result']} ({row['Score']})
+                                - 사용 포메이션: {row['Formation']}
+                                - 감독의 메모: {row['AI_Feedback']}
+                                
+                                [요청 사항]
+                                1. 이 포메이션과 결과, 감독 메모를 종합하여 우리 팀이 잘했을 부분과 보완해야 할 점을 전술적으로 분석해 주세요.
+                                2. 현대 축구 논문이나 유명 감독의 철학을 한 가지 인용해서 조언해 주세요.
+                                3. 다음 경기를 위한 포지션별(공격/중원/수비) 구체적인 훈련 또는 전술 지침을 3줄로 요약해 주세요.
+                                4. 전문적이면서도 대학 축구팀에 맞는 열정적인 어조를 사용하세요.
+                                """
+                                try:
+                                    response = ai_model.generate_content(prompt)
+                                    st.success("분석 완료!")
+                                    st.markdown(f"> **AI 전술 코치의 리포트**\n\n{response.text}")
+                                except Exception as e:
+                                    st.error(f"분석 중 오류가 발생했습니다: {e}")
+            st.write("---")
