@@ -105,15 +105,14 @@ def can_play(player_pos, target_broad_pos):
     if player_pos == "FR" and target_broad_pos != "GK": return True 
     mapping = {"FW": ["FW", "ST", "LW", "RW"], "MF": ["MF", "CM", "CDM", "AMF"], "DF": ["DF", "CB", "RB", "LB"], "GK": ["GK"]}
     return player_pos in mapping.get(target_broad_pos, [])
-
 def generate_squads(players, quarters, formations_selected, tactics):
     all_squads = []
 
-    # 1. 초기화 (선수별 이력 정밀 추적)
+    # 1. 초기 데이터 셋업 (필드와 키퍼 기록을 엄격히 분리)
     for p in players:
-        p["field_play_count"] = 0  # 필드 출전 횟수
-        p["gk_play_count"] = 0     # 키퍼 출전 횟수
-        p["history"] = []          # 뛴 쿼터 기록 (예: [0, 2] -> 1, 3쿼터 출전)
+        p["field_play_count"] = 0  
+        p["gk_play_count"] = 0     
+        p["history"] = []          # 출전한 모든 쿼터 기록 (체력 관리용)
 
     for q in range(quarters):
         form_name = formations_selected[q]
@@ -121,93 +120,88 @@ def generate_squads(players, quarters, formations_selected, tactics):
         sq = {"FW": [], "MF": [], "DF": [], "GK": []}
         selected_in_q = set()
 
-        # --- [1순위] 전문 골키퍼(GK) 먼저 배정 ---
+        # --- [STEP 1] 전문 골키퍼(GK) 최우선 배정 ---
+        # 주포/부포에 'GK'가 있는 사람만 이 단계에서 선발됩니다.
         for p in players:
             if len(sq["GK"]) < formation.get("GK", 1):
-                if "GK" in [p["pos1"], p["pos2"]] and p["name"] not in selected_in_q:
+                if (p["pos1"] == "GK" or p["pos2"] == "GK") and p["name"] not in selected_in_q:
                     sq["GK"].append(p["name"])
                     selected_in_q.add(p["name"])
                     p["gk_play_count"] += 1
                     p["history"].append(q)
 
-        # --- [2순위] 필드 플레이어 배정 (감독님의 5대 원칙 적용) ---
+        # --- [STEP 2] 필드 플레이어 선발 (감독님의 5대 원칙 적용) ---
+        # 여기서는 절대 '키퍼' 자리를 채우지 않습니다. 오직 필드만!
         for t_pos in ["FW", "MF", "DF"]:
             limit = formation.get(t_pos, 0)
-            
             while len(sq[t_pos]) < limit:
                 best_candidate = None
                 best_score = -9999
                 
                 for p in players:
-                    if p["name"] in selected_in_q:
-                        continue
-                        
-                    score = 0
-                    plays = p["field_play_count"]
+                    if p["name"] in selected_in_q: continue
                     
-                    # [원칙 4] 가능한 같은 포지션 (주포지션 +100점, 부포지션 +50점, 땜빵 -50점)
+                    # 키퍼 전문 선수는 필드 플레이어 선발에서 우선순위를 대폭 낮춤 (필요할 때만 투입)
+                    score = 0
+                    if p["pos1"] == "GK": score -= 300 
+                    
+                    # [원칙 4] 포지션 적합도
                     if can_play(p["pos1"], t_pos): score += 100
                     elif can_play(p["pos2"], t_pos): score += 50
-                    else: score -= 50
-                        
-                    # [원칙 1 & 2] 최소 2쿼터 보장 및 균등 분배
-                    if plays < 2: 
-                        score += 500  # 아직 2쿼터를 못 채운 선수는 무조건 압도적 1순위 우대
-                    elif plays == 2: 
-                        score += 100  # 3쿼터째 뛰는 건 OK (원활한 로테이션을 위해)
-                    else: 
-                        score -= 1000 # [원칙 3] 4쿼터 풀출전은 최하위 선택지 (강력한 감점)
-                        
-                    # [원칙 5] 쉬는 쿼터 겹침 방지 (연속 휴식 불가)
-                    # 현재 쿼터가 q일 때, 직전 쿼터(q-1)에 쉬었는가?
+                    
+                    # [원칙 1 & 2] 출전 기회 균등 (필드 출전 횟수 기준)
+                    f_plays = p["field_play_count"]
+                    if f_plays < 2: score += 500
+                    elif f_plays == 2: score += 100
+                    else: score -= 1000 # [원칙 3] 4쿼터 풀출전 방지
+                    
+                    # [원칙 5] 연속 휴식 방지 (퐁당퐁당)
                     if q > 0 and (q - 1) not in p["history"]:
-                        score += 200 # 직전 쿼터에 쉰 선수를 우선 투입하여 '퐁당퐁당' 출전 유도
-                        # 만약 2연속 쉬었다면? (예: 1, 2쿼터 연속 벤치)
-                        if q > 1 and (q - 2) not in p["history"]:
-                            score += 400 # 무조건 뛰게 만듭니다.
-                            
-                    # 가장 점수가 높은 선수를 찾음
+                        score += 250 
+                        if q > 1 and (q - 2) not in p["history"]: score += 500
+                    
                     if score > best_score:
                         best_score = score
                         best_candidate = p
-                        
+                
                 if best_candidate:
                     sq[t_pos].append(best_candidate["name"])
                     selected_in_q.add(best_candidate["name"])
                     best_candidate["field_play_count"] += 1
                     best_candidate["history"].append(q)
-                else:
-                    break # 출전 가능한 남은 인원이 없음
+                else: break
 
-        # --- [3순위] 전문 키퍼가 부족해서 땜빵이 필요한 경우 ---
+        # --- [STEP 3] 비어있는 키퍼 자리 '임시 키퍼' 배정 ---
+        # 전문 키퍼가 없어서 자리가 비었다면, "필드 플레이어로 선발되지 못한 벤치 인원" 중에 선발
         while len(sq["GK"]) < formation.get("GK", 1):
-            best_candidate = None
-            best_score = -9999
+            best_volunteer = None
+            min_field_plays = 999
+            
+            # 벤치 멤버 중 가장 필드에 적게 나간 사람을 우선적으로 '휴식 겸 키퍼'로 배치하거나, 
+            # 혹은 상황에 따라 감독님이 교체하기 편하도록 필드 출전이 적은 사람 기준 정렬
             for p in players:
                 if p["name"] not in selected_in_q:
-                    # 땜빵 키퍼는 필드 출전 횟수(field_play_count)가 가장 적은 사람이 희생
-                    score = -p["field_play_count"] 
-                    if score > best_score:
-                        best_score = score
-                        best_candidate = p
-            if best_candidate:
-                sq["GK"].append(best_candidate["name"])
-                selected_in_q.add(best_candidate["name"])
-                # [원칙 1 완벽 적용] 키퍼 땜빵은 필드 출전 횟수에 안 들어감!
-                best_candidate["gk_play_count"] += 1
-                best_candidate["history"].append(q) # 단, 체력 소모는 했으니 휴식 로직(history)에는 반영
-            else:
-                break
+                    if p["field_play_count"] < min_field_plays:
+                        min_field_plays = p["field_play_count"]
+                        best_volunteer = p
+            
+            if best_volunteer:
+                sq["GK"].append(best_volunteer["name"])
+                selected_in_q.add(best_volunteer["name"])
+                best_volunteer["gk_play_count"] += 1
+                # 중요: history에는 추가하여 '쉬지 않았다'는 것을 알리지만, 
+                # field_play_count는 올리지 않아 다음 쿼터에 필드 나갈 기회를 보장함.
+                best_volunteer["history"].append(q) 
+            else: break
 
         all_squads.append(sq)
 
-    # UI 호환성을 위한 최종 데이터 정리
+    # UI 출전 통계용 데이터 매핑
     for p in players:
-        p["total"] = p["field_play_count"] + p["gk_play_count"]
-        p["p1_count"] = p["total"]
-
+        p["total"] = p["field_play_count"] # 통계표에는 '필드 쿼터수'가 중요하므로 필드 기준 표시
+        p["p1_count"] = p["gk_play_count"] # 부차적으로 키퍼 횟수 저장
+        
     return all_squads, players
-
 def render_interactive_pitch(squad, form_name):
     y_map = {"FW": "15%", "MF": "45%", "DF": "75%", "GK": "90%"}
     player_html = ""
