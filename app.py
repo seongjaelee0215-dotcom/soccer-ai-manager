@@ -108,27 +108,52 @@ def can_play(player_pos, target_broad_pos):
 
 def generate_squads(players, quarters, formations_selected, tactics):
     all_squads = []
+    
+    # 쿼터가 시작되기 전, 선수들의 출전 횟수 데이터를 초기화
+    for p in players:
+        p["total"] = 0
+        p["p1_count"] = 0
+
     for q in range(quarters):
         form_name = formations_selected[q]
         formation = tactics[form_name]["form"]
         sq = {"FW": [], "MF": [], "DF": [], "GK": []}
         selected = []
-        players.sort(key=lambda x: (x["total"], x["p1_count"]))
+        
+        # [핵심 변경점] 매 쿼터, 매 포지션을 짤 때마다 '가장 적게 뛴 사람'을 실시간으로 추적하여 맨 앞으로 정렬합니다.
+
+        # 1단계: 자기 '주 포지션'에 빈자리가 있고, 남들보다 '덜 뛴' 사람 먼저 투입
         for t_pos, limit in formation.items():
+            # 출전 횟수(total)가 적은 순서대로 정렬 (핵심 로직)
+            players.sort(key=lambda x: (x["total"], x["p1_count"]))
             for p in players:
                 if len(sq[t_pos]) < limit and p["name"] not in selected and can_play(p["pos1"], t_pos):
-                    sq[t_pos].append(p["name"]); selected.append(p["name"]); p["total"] += 1; p["p1_count"] += 1
+                    sq[t_pos].append(p["name"])
+                    selected.append(p["name"])
+                    p["total"] += 1
+                    p["p1_count"] += 1
+
+        # 2단계: 빈자리가 남았다면, 자기 '부 포지션'이 맞는 사람 중 '덜 뛴' 사람 투입
         for t_pos, limit in formation.items():
+            players.sort(key=lambda x: x["total"]) # 다시 적게 뛴 순으로 정렬
             for p in players:
                 if len(sq[t_pos]) < limit and p["name"] not in selected and p["pos2"] and can_play(p["pos2"], t_pos):
-                    sq[t_pos].append(p["name"]); selected.append(p["name"]); p["total"] += 1
-        players.sort(key=lambda x: x["total"])
+                    sq[t_pos].append(p["name"])
+                    selected.append(p["name"])
+                    p["total"] += 1
+
+        # 3단계: 그래도 빈자리가 남았다면? (포지션 파괴) 무조건 '가장 안 뛴 사람'을 억지로라도 투입 (골키퍼 제외)
         for t_pos, limit in formation.items():
-            if t_pos == "GK": continue 
+            if t_pos == "GK": continue # 골키퍼는 아무나 시킬 수 없으므로 제외
+            players.sort(key=lambda x: x["total"]) # 철저하게 적게 뛴 순으로 다시 정렬
             for p in players:
                 if len(sq[t_pos]) < limit and p["name"] not in selected and p["pos1"] != "GK":
-                    sq[t_pos].append(p["name"]); selected.append(p["name"]); p["total"] += 1
+                    sq[t_pos].append(p["name"])
+                    selected.append(p["name"])
+                    p["total"] += 1
+                    
         all_squads.append(sq)
+        
     return all_squads, players
 
 def render_interactive_pitch(squad, form_name):
