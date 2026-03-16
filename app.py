@@ -108,52 +108,104 @@ def can_play(player_pos, target_broad_pos):
 
 def generate_squads(players, quarters, formations_selected, tactics):
     all_squads = []
-    
-    # 쿼터가 시작되기 전, 선수들의 출전 횟수 데이터를 초기화
+
+    # 1. 초기화 (선수별 이력 정밀 추적)
     for p in players:
-        p["total"] = 0
-        p["p1_count"] = 0
+        p["field_play_count"] = 0  # 필드 출전 횟수
+        p["gk_play_count"] = 0     # 키퍼 출전 횟수
+        p["history"] = []          # 뛴 쿼터 기록 (예: [0, 2] -> 1, 3쿼터 출전)
 
     for q in range(quarters):
         form_name = formations_selected[q]
         formation = tactics[form_name]["form"]
         sq = {"FW": [], "MF": [], "DF": [], "GK": []}
-        selected = []
-        
-        # [핵심 변경점] 매 쿼터, 매 포지션을 짤 때마다 '가장 적게 뛴 사람'을 실시간으로 추적하여 맨 앞으로 정렬합니다.
+        selected_in_q = set()
 
-        # 1단계: 자기 '주 포지션'에 빈자리가 있고, 남들보다 '덜 뛴' 사람 먼저 투입
-        for t_pos, limit in formation.items():
-            # 출전 횟수(total)가 적은 순서대로 정렬 (핵심 로직)
-            players.sort(key=lambda x: (x["total"], x["p1_count"]))
-            for p in players:
-                if len(sq[t_pos]) < limit and p["name"] not in selected and can_play(p["pos1"], t_pos):
-                    sq[t_pos].append(p["name"])
-                    selected.append(p["name"])
-                    p["total"] += 1
-                    p["p1_count"] += 1
+        # --- [1순위] 전문 골키퍼(GK) 먼저 배정 ---
+        for p in players:
+            if len(sq["GK"]) < formation.get("GK", 1):
+                if "GK" in [p["pos1"], p["pos2"]] and p["name"] not in selected_in_q:
+                    sq["GK"].append(p["name"])
+                    selected_in_q.add(p["name"])
+                    p["gk_play_count"] += 1
+                    p["history"].append(q)
 
-        # 2단계: 빈자리가 남았다면, 자기 '부 포지션'이 맞는 사람 중 '덜 뛴' 사람 투입
-        for t_pos, limit in formation.items():
-            players.sort(key=lambda x: x["total"]) # 다시 적게 뛴 순으로 정렬
-            for p in players:
-                if len(sq[t_pos]) < limit and p["name"] not in selected and p["pos2"] and can_play(p["pos2"], t_pos):
-                    sq[t_pos].append(p["name"])
-                    selected.append(p["name"])
-                    p["total"] += 1
-
-        # 3단계: 그래도 빈자리가 남았다면? (포지션 파괴) 무조건 '가장 안 뛴 사람'을 억지로라도 투입 (골키퍼 제외)
-        for t_pos, limit in formation.items():
-            if t_pos == "GK": continue # 골키퍼는 아무나 시킬 수 없으므로 제외
-            players.sort(key=lambda x: x["total"]) # 철저하게 적게 뛴 순으로 다시 정렬
-            for p in players:
-                if len(sq[t_pos]) < limit and p["name"] not in selected and p["pos1"] != "GK":
-                    sq[t_pos].append(p["name"])
-                    selected.append(p["name"])
-                    p["total"] += 1
+        # --- [2순위] 필드 플레이어 배정 (감독님의 5대 원칙 적용) ---
+        for t_pos in ["FW", "MF", "DF"]:
+            limit = formation.get(t_pos, 0)
+            
+            while len(sq[t_pos]) < limit:
+                best_candidate = None
+                best_score = -9999
+                
+                for p in players:
+                    if p["name"] in selected_in_q:
+                        continue
+                        
+                    score = 0
+                    plays = p["field_play_count"]
                     
+                    # [원칙 4] 가능한 같은 포지션 (주포지션 +100점, 부포지션 +50점, 땜빵 -50점)
+                    if can_play(p["pos1"], t_pos): score += 100
+                    elif can_play(p["pos2"], t_pos): score += 50
+                    else: score -= 50
+                        
+                    # [원칙 1 & 2] 최소 2쿼터 보장 및 균등 분배
+                    if plays < 2: 
+                        score += 500  # 아직 2쿼터를 못 채운 선수는 무조건 압도적 1순위 우대
+                    elif plays == 2: 
+                        score += 100  # 3쿼터째 뛰는 건 OK (원활한 로테이션을 위해)
+                    else: 
+                        score -= 1000 # [원칙 3] 4쿼터 풀출전은 최하위 선택지 (강력한 감점)
+                        
+                    # [원칙 5] 쉬는 쿼터 겹침 방지 (연속 휴식 불가)
+                    # 현재 쿼터가 q일 때, 직전 쿼터(q-1)에 쉬었는가?
+                    if q > 0 and (q - 1) not in p["history"]:
+                        score += 200 # 직전 쿼터에 쉰 선수를 우선 투입하여 '퐁당퐁당' 출전 유도
+                        # 만약 2연속 쉬었다면? (예: 1, 2쿼터 연속 벤치)
+                        if q > 1 and (q - 2) not in p["history"]:
+                            score += 400 # 무조건 뛰게 만듭니다.
+                            
+                    # 가장 점수가 높은 선수를 찾음
+                    if score > best_score:
+                        best_score = score
+                        best_candidate = p
+                        
+                if best_candidate:
+                    sq[t_pos].append(best_candidate["name"])
+                    selected_in_q.add(best_candidate["name"])
+                    best_candidate["field_play_count"] += 1
+                    best_candidate["history"].append(q)
+                else:
+                    break # 출전 가능한 남은 인원이 없음
+
+        # --- [3순위] 전문 키퍼가 부족해서 땜빵이 필요한 경우 ---
+        while len(sq["GK"]) < formation.get("GK", 1):
+            best_candidate = None
+            best_score = -9999
+            for p in players:
+                if p["name"] not in selected_in_q:
+                    # 땜빵 키퍼는 필드 출전 횟수(field_play_count)가 가장 적은 사람이 희생
+                    score = -p["field_play_count"] 
+                    if score > best_score:
+                        best_score = score
+                        best_candidate = p
+            if best_candidate:
+                sq["GK"].append(best_candidate["name"])
+                selected_in_q.add(best_candidate["name"])
+                # [원칙 1 완벽 적용] 키퍼 땜빵은 필드 출전 횟수에 안 들어감!
+                best_candidate["gk_play_count"] += 1
+                best_candidate["history"].append(q) # 단, 체력 소모는 했으니 휴식 로직(history)에는 반영
+            else:
+                break
+
         all_squads.append(sq)
-        
+
+    # UI 호환성을 위한 최종 데이터 정리
+    for p in players:
+        p["total"] = p["field_play_count"] + p["gk_play_count"]
+        p["p1_count"] = p["total"]
+
     return all_squads, players
 
 def render_interactive_pitch(squad, form_name):
